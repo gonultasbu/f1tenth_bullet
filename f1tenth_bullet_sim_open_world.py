@@ -54,11 +54,14 @@ class BulletSim():
 		self.positions = []
 		self.totalNumOfLaps = 1
 		self.lap_count = 0
-		self.initial_position = [0.0, 0.204, 0.0]
+		self.initial_position = [10, 0.204, 0.0]
 		self.inInterval = True
 
 		self.gyro_data = []
 		self.accel_data = []
+		self.sensor_freq = 200 # Hz
+		self.vel_data = []
+		self.steering_angle_data = []
 		self.prev_vel  = [0,0,0]  #Initial Linear Velocities of the Vehicle
 		return 
 		
@@ -72,13 +75,13 @@ class BulletSim():
 		p.resetSimulation()
 		# Load the track sdf
 		ground_tuple = p.loadSDF(os.path.join(
-					os.path.dirname(__file__), "./tracks/barcelona/barcelona.sdf"),globalScaling=0.75)
+					os.path.dirname(__file__), "./tracks/barcelona/barcelona.sdf")) # ,globalScaling=0.75)
 
 		new_orientation = p.getQuaternionFromEuler((-np.pi/2, 0, 0))
 		for gt_elem in ground_tuple:
 			p.resetBasePositionAndOrientation(gt_elem, (0, 0, 0), new_orientation)
 
-		init_heading_euler = R.from_euler("YZX",[0.0,0.0,-90.0] , degrees=True)
+		init_heading_euler = R.from_euler("YZX",[180.0,0.0,-90.0] , degrees=True)
 		# init_heading_quat  = init_heading_euler.as_quat()
 		
 		# Agent Load 
@@ -91,10 +94,11 @@ class BulletSim():
 		p.setTimeStep(self.sim_ts)
 		p.setRealTimeSimulation(0)
 
-		fic = 0.92
+		fic = 0.4
+		fic_g = 0.9
 		for gt_elem in ground_tuple:
 			# Make lateralFriction f(t) 
-			p.changeDynamics(gt_elem,0,lateralFriction=fic,spinningFriction=0.0,rollingFriction=0.0,restitution=0)
+			p.changeDynamics(gt_elem,0,lateralFriction=fic_g,spinningFriction=0.0,rollingFriction=0.0,restitution=0)
 
 		p.changeDynamics(agent,2,lateralFriction=fic,spinningFriction=0.0,rollingFriction=0.0,restitution=0)
 		p.changeDynamics(agent,3,lateralFriction=fic,spinningFriction=0.0,rollingFriction=0.0,restitution=0)
@@ -102,22 +106,59 @@ class BulletSim():
 		p.changeDynamics(agent,7,lateralFriction=fic,spinningFriction=0.0,rollingFriction=0.0,restitution=0)
 
 		i = 0
-		while(self.lap_count != self.totalNumOfLaps):
+		driving = False
+		max_velocity = 20
+		velocity = 0
+		steering_angle = 0
+		max_steering_angle = 0.5  # Maximum steering angle
+		steering_increment = 0.02
+		while(True):
 		# Condition on the lap count
-			if (self.firstLapCompleted == False):			
-				p.stepSimulation()
-				# time.sleep(0.000001)
+			keys = p.getKeyboardEvents()
+			p.stepSimulation()
+			# time.sleep(0.000001)
+
+			# Start and Stop Condition
+			# Start driving with 'D' key
+			if ord('d') in keys and keys[ord('d')] & p.KEY_IS_DOWN:
+				driving = True
+			# Stop the loop with 'S' key
+			if ord('s') in keys and keys[ord('s')] & p.KEY_IS_DOWN:
+				break  # Exit the while loop
+			if ord('r') in keys and keys[ord('r')] & p.KEY_IS_DOWN:
+				p.resetBasePositionAndOrientation(agent, self.initial_position, init_heading_euler.as_quat())
+				velocity = 0
+				steering_angle = 0
+			if driving:
+				# Control logic based on key presses
+				if p.B3G_UP_ARROW in keys and keys[p.B3G_UP_ARROW] & p.KEY_IS_DOWN:
+					velocity += 0.01
+				elif p.B3G_DOWN_ARROW in keys and keys[p.B3G_DOWN_ARROW] & p.KEY_IS_DOWN:
+					velocity -= 0.01
+				else:
+					velocity = 0
+				if p.B3G_LEFT_ARROW in keys and keys[p.B3G_LEFT_ARROW] & p.KEY_IS_DOWN:
+					steering_angle += steering_increment
+				elif p.B3G_RIGHT_ARROW in keys and keys[p.B3G_RIGHT_ARROW] & p.KEY_IS_DOWN:
+					steering_angle -= steering_increment
+				else:
+					# Gradually return to neutral position
+					if steering_angle > 0:
+						steering_angle = max(0, steering_angle - steering_increment)
+					elif steering_angle < 0:
+						steering_angle = min(0, steering_angle + steering_increment)
+
+				velocity = max(-max_velocity, min(velocity, max_velocity))
+				steering_angle = max(-max_steering_angle, min(steering_angle, max_steering_angle))
 
 				# cg_pos_3d_xyz = np.array(p.getLinkState(agent,8)[0])
 				agent_pos, agent_orn = p.getBasePositionAndOrientation(agent)
 				self.positions.append(agent_pos)
-				if (i % 5000) == 0 and (i != 0):
-					friction_val = self.change_friction(ground_tuple,agent)
-					print("friction value changed to: ", friction_val)	
+
 				cg_pos_3d_xyz = np.array(agent_pos)
 				self.veh_2d_world_pos = cg_pos_3d_xyz[[0,2]]
-				self.count_laps()
-				
+				# self.count_laps()
+			
 				# cg_heading_3d_quat = R.from_quat(np.array(p.getLinkState(agent,8)[1]))
 				cg_heading_3d_quat = R.from_quat(np.array(agent_orn))
 				self.veh_2d_world_heading  = -cg_heading_3d_quat.as_euler('YZX', degrees=False)[0]
@@ -138,22 +179,20 @@ class BulletSim():
 
 				projection_matrix = p.computeProjectionMatrixFOV(
 							fov=90, aspect=1.5, nearVal=0.02, farVal=3.5)
+				if not (i%((1/self.sim_ts))):
+					print("Current Velocity Command:", velocity, "Steering Angle:", steering_angle)
+					print("Current Velocity Reading", self.prev_vel)
 
 				if not (i%self.controller_freq):
 					imgs = p.getCameraImage(640, 480,
 								view_matrix,
 								projection_matrix, shadow=True,
 								renderer=p.ER_BULLET_HARDWARE_OPENGL)
-					
-					true_scan_depths = self.get_true_depth_values(imgs[3][240,:])
-					# Creating the controlled imput
-					# _, steering_angle = self.gf.process_lidar(true_scan_depths)
-					velocity, steering_angle = self.customDriver.process_lidar(true_scan_depths)
-
+				
 
 					# self.target_steering_angle = np.deg2rad(self.linear_Cntrl(self.K,e_state))
-					self.target_steering_angle = -steering_angle
-					velocity = 1.5*velocity
+					self.target_steering_angle = steering_angle
+					# velocity = 1.5*velocity
 					# velocity = 18.0
 						
 					p.setJointMotorControl2(bodyUniqueId=agent,
@@ -165,34 +204,40 @@ class BulletSim():
 						controlMode=p.POSITION_CONTROL,
 						targetPosition = self.target_steering_angle)
 					
+					self.steering_angle_data.append(self.target_steering_angle)
+
 				if not (i%int((1/self.controller_freq) * (1/self.sim_ts))):
-						# Controlling the four wheel of the car  
-						p.setJointMotorControl2(bodyUniqueId=agent,
-							jointIndex=2,
-							controlMode=p.VELOCITY_CONTROL,
-							targetVelocity = velocity)
-						p.setJointMotorControl2(bodyUniqueId=agent,
-							jointIndex=3,
-							controlMode=p.VELOCITY_CONTROL,
-							targetVelocity = velocity)
-						
-						p.setJointMotorControl2(bodyUniqueId=agent,
-							jointIndex=5,
-							controlMode=p.VELOCITY_CONTROL,
-							targetVelocity = velocity)
-						p.setJointMotorControl2(bodyUniqueId=agent,
-							jointIndex=7,
-							controlMode=p.VELOCITY_CONTROL,
-							targetVelocity = velocity)
-				# Collect the gyro and accel values
-				
-				gyro_reading = self.gyro(agent)
-				self.gyro_data.append(gyro_reading)
-			
-				accel_reading = self.accelerometer(agent, self.prev_vel, self.sim_ts)
-				self.accel_data.append(accel_reading)
-			# Check for the whether we finished a lap or not
-			i += 1
+					# Controlling the four wheel of the car  
+					p.setJointMotorControl2(bodyUniqueId=agent,
+						jointIndex=2,
+						controlMode=p.VELOCITY_CONTROL,
+						targetVelocity = velocity)
+					p.setJointMotorControl2(bodyUniqueId=agent,
+						jointIndex=3,
+						controlMode=p.VELOCITY_CONTROL,
+						targetVelocity = velocity)
+					
+					p.setJointMotorControl2(bodyUniqueId=agent,
+						jointIndex=5,
+						controlMode=p.VELOCITY_CONTROL,
+						targetVelocity = velocity)
+					p.setJointMotorControl2(bodyUniqueId=agent,
+						jointIndex=7,
+						controlMode=p.VELOCITY_CONTROL,
+						targetVelocity = velocity)
+					# Collect the gyro and accel val	
+					self.vel_data.append(velocity)
+					
+				# input
+				if not (i%np.ceil((1/self.sensor_freq)*(1/self.sim_ts))):
+					gyro_reading = self.gyro(agent)
+					self.gyro_data.append(gyro_reading)
+
+					accel_reading = self.accelerometer(agent, self.prev_vel, self.sim_ts)
+					self.accel_data.append(accel_reading)
+					self.prev_vel = p.getBaseVelocity(agent)[0]
+				# Check for the whether we finished a lap or not
+				i += 1
 
 		self.gyro_data = np.array(self.gyro_data)
 		self.accel_data = np.array(self.accel_data)
@@ -203,25 +248,6 @@ class BulletSim():
 		return self.cam_far * self.cam_near / (self.cam_far - (self.cam_far - self.cam_near)*input)
 
 
-	def count_laps(self):
-		# Create a treshold for interval when we enter it
-		eps_x = 0.1
-		eps_z = 1.5
-		prev_inInterval = self.inInterval
-		x_interval = [self.initial_position[0]-eps_x,self.initial_position[0]+eps_x]
-		z_interval = [self.initial_position[2]-eps_z,self.initial_position[2]+eps_z]
-		if (self.veh_2d_world_pos[0] >= x_interval[0]) and (self.veh_2d_world_pos[0] <= x_interval[1]):
-			if (self.veh_2d_world_pos[1] >= z_interval[0]) and (self.veh_2d_world_pos[1] <= z_interval[1]):
-				self.inInterval = True
-			else:
-				self.inInterval = False
-		else:
-			self.inInterval = False
-
-		if (prev_inInterval != self.inInterval) and self.inInterval:
-			self.lap_count += 1
-			print("Car took a lap around the track")
-		return  
 	
 
 	def plot_positions(self):
@@ -250,12 +276,12 @@ class BulletSim():
 		# plt.colorbar(sm, ticks=np.linspace(0, len(x_coords), num=5))  # Adjust number of ticks if needed
 
 
-		plt.savefig('./data/trajectories/car_trajectory_full_fric_change.pdf')  # Save the plot as a PDF
+		plt.savefig('./data/trajectories/car_trajectory_open_world.pdf')  # Save the plot as a PDF
 		plt.close()
 
 	
 		# Save positions as csv file
-		filename = './data/friction/ftg_friction_ftg_full_change.csv'
+		filename = './data/friction/friction_open_world.csv'
 		with open(filename, mode='w', newline='') as file:
 			writer = csv.writer(file)
 			writer.writerows(self.positions)
@@ -310,12 +336,12 @@ def plot_gyro_accel(gyro_data, accel_data):
 
 	plt.tight_layout()
 	
-	plt.savefig('./data/sensors/gyro_plots_flat.pdf')  # Save the plot as a PDF
+	plt.savefig('./data/sensors/gyro_plots_open_world.pdf')  # Save the plot as a PDF
 	plt.close()
 
 
 	# Save positions as csv file
-	filename = './data/sensors/gyro_values_flat.csv'
+	filename = './data/sensors/gyro_values_open_world.csv'
 	with open(filename, mode='w', newline='') as file:
 		writer = csv.writer(file)
 		writer.writerows(gyro_data)
@@ -333,14 +359,14 @@ def plot_gyro_accel(gyro_data, accel_data):
 		plt.grid()
 
 	plt.tight_layout()
-	plt.savefig('./data/sensors/accel_plots_flat.pdf')  # Save the plot as a PDF
+	plt.savefig('./data/sensors/accel_plots_open_world.pdf')  # Save the plot as a PDF
 	plt.close()
 
 	#Save positions as csv file
 	filename = './data/sensors/accel_values_flat.csv'
 	with open(filename, mode='w', newline='') as file:
 		writer = csv.writer(file)
-		writer.writerows(gyro_data)
+		writer.writerows(accel_data)
 
 	print(f"Accel Data has been written to {filename}")
 
@@ -350,7 +376,7 @@ def plot_gyro_accel(gyro_data, accel_data):
 if __name__ == "__main__":
 	bs = BulletSim()
 	bs.run_sim()
-	print(bs.lap_count)
+	# print(bs.lap_count)
 	plot_gyro_accel(bs.gyro_data, bs.accel_data)
 	bs.plot_positions()
 	quit()

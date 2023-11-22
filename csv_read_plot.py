@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os, sys
 from datetime import datetime
+
 start_time = datetime.now().strftime("%Y-%m-%d%H-%M-%S")
 script_name = os.path.split(sys.argv[0])[-1].split(".")[0]
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -12,7 +13,7 @@ folder_path = './data/friction'
 
 # Get a list of CSV files in the specified directory
 # csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
-csv_files = [f for f in os.listdir(folder_path) if f.endswith('_2.csv')]
+csv_files = [f for f in os.listdir(folder_path) if f.endswith('092_2.csv') or f.endswith('092_1.csv')]
 # Initialize a plot
 plt.figure(figsize=(10, 5))
 
@@ -24,8 +25,12 @@ for file in csv_files:
     # Read the CSV file into a DataFrame
     df = pd.read_csv(file_path, header=None, names=['x','y','z'])
     
+    # For Labeling 
+    parts = file.split('_')
+    # modified_part = parts[-2][0] + '.' + parts[-2][1:]
+    modified_part = parts[-2] + "_" + parts[-1]
     # Plot x and z values
-    plt.plot(df['x'], df['z'], label=file[:-4])
+    plt.plot(df['x'], df['z'], label=modified_part[:-4])
 
 # Set plot labels and title
 plt.xlabel('X coordinate')
